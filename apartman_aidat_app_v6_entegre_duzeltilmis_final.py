@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Apartman Aidat Sistemi v6 - Entegre Versiyon
+Apartman Aidat Sistemi v6 - Entegre Versiyon - TAMAMLANMIŞ
 Temiz Ödeme Sistemi ile
 
 Özellikler:
-- Daire yönetimi (CRUD, aktif/pasif, devir)
-- Sakin geçmişi (dönem bazlı)
-- Tahakkuk (dönem yazma, Excel import)
-- ✨ TEMIZ ÖDEME SİSTEMİ (checkbox tabanlı, çoklu dönem seçimi)
-- Gider yönetimi
-- Duyuru sistemi
-- Rapor (borçlu/gecikmiş filtre)
-- Kasa raporu
-- Ekstre (daire bazlı)
+✅ Daire yönetimi (CRUD, aktif/pasif, devir)
+✅ Sakin geçmişi (dönem bazlı)
+✅ Tahakkuk (dönem yazma, Excel import)
+✅ TEMIZ ÖDEME SİSTEMİ (checkbox tabanlı, çoklu dönem seçimi)
+✅ Gider yönetimi
+✅ Duyuru sistemi
+✅ Rapor (borçlu/gecikmiş filtre)
+✅ Kasa raporu (YENI)
+✅ Ekstre (daire bazlı - YENI)
+✅ Geçmiş ödeme tablosu (YENI)
+✅ WhatsApp ödeme bildirimi (YENI)
 """
 
 import sys
@@ -266,6 +268,38 @@ def autosize_worksheet(ws):
             if len(v) > max_len:
                 max_len = len(v)
         ws.column_dimensions[col_letter].width = min(max_len + 2, 55)
+
+
+def create_whatsapp_message(daire_no: str, ad: str, doneler: list, toplam: float, makbuz_no: str) -> str:
+    """WhatsApp mesajı oluştur"""
+    msg = f"*AİDAT ÖDEME ONAYLANDI* ✅\n\n"
+    msg += f"Daire: {daire_no}\n"
+    msg += f"Sakin: {ad}\n\n"
+    msg += f"Makbuz No: {makbuz_no}\n"
+    msg += f"Ödenen Dönemler:\n"
+    for d in doneler:
+        msg += f"  • {d}\n"
+    msg += f"\n*TOPLAM: {toplam:.2f} TL*\n"
+    msg += f"Tarih: {date.today().isoformat()}\n"
+    return msg
+
+
+def open_whatsapp_chat(telefon: str, mesaj: str):
+    """WhatsApp Web üzerinden sohbeti aç"""
+    if not telefon or len(telefon) < 10:
+        QMessageBox.warning(None, "Uyarı", "Geçersiz telefon numarası.")
+        return
+    
+    # Telefon numarasını temizle (sadece rakamlar)
+    tel_clean = ''.join(filter(str.isdigit, telefon))
+    if not tel_clean.startswith('90'):
+        if tel_clean.startswith('0'):
+            tel_clean = '90' + tel_clean[1:]
+        else:
+            tel_clean = '90' + tel_clean
+    
+    url = f"https://wa.me/{tel_clean}?text={quote(mesaj)}"
+    webbrowser.open(url)
 
 
 # ============ MODAL DIALOGS ============
@@ -574,9 +608,12 @@ class ApartmanAidatApp(QWidget):
         self._tab_daireler()
         self._tab_tahakkuk()
         self._tab_odeme()  # ✨ TEMIZ ÖDEME SİSTEMİ
+        self._tab_odeme_gecmisi()  # YENI: Geçmiş Ödemeler
         self._tab_gider()
         self._tab_duyuru()
         self._tab_rapor()
+        self._tab_kasa()  # YENI: Kasa Raporu
+        self._tab_ekstre()  # YENI: Ekstre
     
     def _tab_daireler(self):
         """Daire yönetimi sekmesi"""
@@ -888,15 +925,61 @@ class ApartmanAidatApp(QWidget):
         btn_kaydet.setMinimumHeight(40)
         btn_kaydet.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
         
+        btn_whatsapp = QPushButton("💬 WhatsApp Gönder")
+        btn_whatsapp.clicked.connect(self.payment_send_whatsapp)
+        btn_whatsapp.setMinimumHeight(40)
+        btn_whatsapp.setStyleSheet("background-color: #25D366; color: white; font-weight: bold;")
+        
         btn_temizle = QPushButton("🔄 Temizle")
         btn_temizle.clicked.connect(self.payment_clear)
         
         btns.addWidget(btn_kaydet, 2)
+        btns.addWidget(btn_whatsapp, 2)
         btns.addWidget(btn_temizle, 1)
         btns.addStretch(1)
         lay.addLayout(btns)
         
         self.tabs.addTab(w, "Ödeme")
+    
+    def payment_send_whatsapp(self):
+        """Ödeme OnayıWhatsApp ile gönder"""
+        daire_id = self.o_cmb_daire.currentData()
+        
+        if not daire_id:
+            QMessageBox.warning(self, "Uyarı", "Daire seçin.")
+            return
+        
+        # Seçili dönemleri topla
+        odenecek_doneler = []
+        toplam_tutar = 0.0
+        
+        for row in range(self.tbl_borc.rowCount()):
+            chk = self.tbl_borc.cellWidget(row, 0)
+            if chk and chk.isChecked():
+                donem = self.tbl_borc.item(row, 1).text()
+                tutar = float(self.tbl_borc.item(row, 2).text())
+                odenecek_doneler.append(donem)
+                toplam_tutar += tutar
+        
+        if not odenecek_doneler:
+            QMessageBox.warning(self, "Uyarı", "Ödeme yapılacak dönem seçin.")
+            return
+        
+        # Daire bilgilerini al
+        daire_info = self._get_daire_info(int(daire_id))
+        makbuz_no = receipt_next_for_period(odenecek_doneler[0])
+        
+        # WhatsApp mesajı oluştur
+        mesaj = create_whatsapp_message(
+            daire_info['daire_no'],
+            daire_info['ad'],
+            odenecek_doneler,
+            toplam_tutar,
+            makbuz_no
+        )
+        
+        # WhatsApp'ı aç
+        open_whatsapp_chat(daire_info['tel'], mesaj)
     
     def refresh_odeme_daire_combo(self):
         con = connect()
@@ -1094,6 +1177,123 @@ class ApartmanAidatApp(QWidget):
         except Exception as e:
             con.close()
             QMessageBox.critical(self, "Hata", f"Ödeme kaydedilemedi:\n{str(e)}")
+    
+    def _tab_odeme_gecmisi(self):
+        """YENI: Geçmiş ödemeler tablosu"""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Dönem:"))
+        self.og_in_donem = QLineEdit(ym_of_today())
+        self.og_in_donem.setMaximumWidth(110)
+        self.og_in_donem.textChanged.connect(self.refresh_odeme_gecmisi_table)
+        top.addWidget(self.og_in_donem)
+        
+        top.addWidget(QLabel("Daire:"))
+        self.og_cmb_daire = QComboBox()
+        self.og_cmb_daire.addItem("Tümü", None)
+        self.og_cmb_daire.currentIndexChanged.connect(self.refresh_odeme_gecmisi_table)
+        top.addWidget(self.og_cmb_daire)
+        
+        top.addStretch(1)
+        lay.addLayout(top)
+        
+        self.tbl_odeme_gecmis = QTableWidget(0, 8)
+        self.tbl_odeme_gecmis.setHorizontalHeaderLabels(["ID", "Dönem", "Daire", "Ad", "Tarih", "Tutar", "Yöntem", "Makbuz"])
+        self.tbl_odeme_gecmis.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_odeme_gecmis.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tbl_odeme_gecmis.doubleClicked.connect(self.open_payment_for_edit)
+        self.tbl_odeme_gecmis.horizontalHeader().setStretchLastSection(True)
+        self.tbl_odeme_gecmis.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        lay.addWidget(self.tbl_odeme_gecmis, 1)
+        
+        self.tabs.addTab(w, "Geçmiş Ödemeler")
+    
+    def refresh_odeme_gecmisi_daire_combo(self):
+        """Geçmiş ödeme ekranı için daire combo'yu doldur"""
+        con = connect()
+        rows = con.execute("""
+            SELECT DISTINCT id, daire_no, ad_soyad
+            FROM daireler
+            ORDER BY CAST(daire_no AS INT), daire_no
+        """).fetchall()
+        con.close()
+        
+        self.og_cmb_daire.blockSignals(True)
+        self.og_cmb_daire.clear()
+        self.og_cmb_daire.addItem("Tümü", None)
+        
+        for did, dno, ad in rows:
+            self.og_cmb_daire.addItem(f"{dno} - {ad}", did)
+        
+        self.og_cmb_daire.blockSignals(False)
+    
+    def refresh_odeme_gecmisi_table(self):
+        """Geçmiş ödemeleri yükle"""
+        donem = self.og_in_donem.text().strip()
+        daire_id = self.og_cmb_daire.currentData()
+        
+        con = connect()
+        
+        if not validate_period(donem):
+            query = """
+                SELECT o.id, o.donem, d.daire_no, d.ad_soyad, o.tarih, o.tutar, o.yontem, o.makbuz_no
+                FROM odemeler o
+                JOIN daireler d ON d.id = o.daire_id
+                WHERE 1=1
+            """
+            params = []
+        else:
+            query = """
+                SELECT o.id, o.donem, d.daire_no, d.ad_soyad, o.tarih, o.tutar, o.yontem, o.makbuz_no
+                FROM odemeler o
+                JOIN daireler d ON d.id = o.daire_id
+                WHERE o.donem = ?
+            """
+            params = [donem]
+        
+        if daire_id:
+            query += " AND o.daire_id = ?"
+            params.append(daire_id)
+        
+        query += " ORDER BY o.id DESC"
+        
+        rows = con.execute(query, params).fetchall()
+        con.close()
+        
+        self.tbl_odeme_gecmis.setRowCount(0)
+        for rec in rows:
+            row = self.tbl_odeme_gecmis.rowCount()
+            self.tbl_odeme_gecmis.insertRow(row)
+            
+            for c, val in enumerate(rec):
+                it = QTableWidgetItem(str(val))
+                
+                if c == 0:
+                    it.setTextAlignment(Qt.AlignCenter)
+                if c == 5:  # Tutar
+                    it.setText(f"{float(val):.2f}")
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                
+                it.setBackground(QColor(245, 250, 255))
+                self.tbl_odeme_gecmis.setItem(row, c, it)
+    
+    def open_payment_for_edit(self, index):
+        """Ödemeyi düzenle modalı aç"""
+        row = index.row()
+        
+        try:
+            payment_id = int(self.tbl_odeme_gecmis.item(row, 0).text())
+        except Exception:
+            QMessageBox.warning(self, "Hata", "Ödeme ID'si alınamadı.")
+            return
+        
+        dialog = EditPaymentDialog(payment_id, self)
+        dialog.exec()
+        
+        self.refresh_odeme_gecmisi_table()
+        self.refresh_all()
     
     def _get_daire_info(self, daire_id: int) -> dict:
         """Daire bilgilerini al"""
@@ -1542,6 +1742,336 @@ class ApartmanAidatApp(QWidget):
             f"Ödeme: {toplam_odeme:.2f} TL | Bakiye: {net:.2f} TL"
         )
     
+    def _tab_kasa(self):
+        """YENI: Kasa Raporu Sekmesi"""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Dönem:"))
+        self.k_in_donem = QLineEdit(ym_of_today())
+        self.k_in_donem.setMaximumWidth(110)
+        top.addWidget(self.k_in_donem)
+        
+        self.btn_k_calc = QPushButton("Hesapla")
+        self.btn_k_calc.clicked.connect(self.refresh_kasa)
+        top.addWidget(self.btn_k_calc)
+        
+        top.addStretch(1)
+        lay.addLayout(top)
+        
+        # Özet bilgileri
+        self.lbl_k_summary = QLabel()
+        self.lbl_k_summary.setStyleSheet("""
+            background-color: #f0f0f0; 
+            padding: 15px; 
+            font-size: 13px; 
+            border-radius: 5px;
+            font-weight: bold;
+        """)
+        lay.addWidget(self.lbl_k_summary)
+        
+        # Gelir/Gider tablosu
+        self.tbl_kasa = QTableWidget(0, 3)
+        self.tbl_kasa.setHorizontalHeaderLabels(["Kategori", "Dönem", "Tutar (TL)"])
+        self.tbl_kasa.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_kasa.horizontalHeader().setStretchLastSection(True)
+        self.tbl_kasa.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        lay.addWidget(self.tbl_kasa, 1)
+        
+        self.tabs.addTab(w, "Kasa")
+    
+    def refresh_kasa(self):
+        """Kasa raporunu hesapla"""
+        donem = self.k_in_donem.text().strip()
+        
+        if not validate_period(donem):
+            QMessageBox.warning(self, "Uyarı", "Dönem formatı YYYY-MM olmalı.")
+            return
+        
+        con = connect()
+        
+        # Gelir = Tahakkuk
+        tahakkuk_row = con.execute("""
+            SELECT COALESCE(SUM(tutar), 0)
+            FROM tahakkuk
+            WHERE donem=?
+        """, (donem,)).fetchone()
+        tahakkuk_toplam = float(tahakkuk_row[0]) if tahakkuk_row[0] else 0
+        
+        # Ödeme geliri
+        odeme_row = con.execute("""
+            SELECT COALESCE(SUM(tutar), 0)
+            FROM odemeler
+            WHERE donem=?
+        """, (donem,)).fetchone()
+        odeme_toplam = float(odeme_row[0]) if odeme_row[0] else 0
+        
+        # Kategorili giderler
+        gider_rows = con.execute("""
+            SELECT kategori, COALESCE(SUM(tutar), 0)
+            FROM giderler
+            WHERE donem=?
+            GROUP BY kategori
+            ORDER BY kategori
+        """, (donem,)).fetchall()
+        
+        toplam_gider = sum(float(r[1]) for r in gider_rows)
+        
+        con.close()
+        
+        # Tabloyu doldur
+        self.tbl_kasa.setRowCount(0)
+        
+        # Gelir başlığı
+        row = self.tbl_kasa.rowCount()
+        self.tbl_kasa.insertRow(row)
+        item = QTableWidgetItem("GELİRLER")
+        item.setStyleSheet("background-color: #90EE90; font-weight: bold;")
+        self.tbl_kasa.setItem(row, 0, item)
+        
+        # Tahakkuk
+        row = self.tbl_kasa.rowCount()
+        self.tbl_kasa.insertRow(row)
+        self.tbl_kasa.setItem(row, 0, QTableWidgetItem("  Tahakkuk Geliri"))
+        self.tbl_kasa.setItem(row, 1, QTableWidgetItem(donem))
+        item = QTableWidgetItem(f"{tahakkuk_toplam:.2f}")
+        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.tbl_kasa.setItem(row, 2, item)
+        
+        # Ödeme geliri
+        row = self.tbl_kasa.rowCount()
+        self.tbl_kasa.insertRow(row)
+        self.tbl_kasa.setItem(row, 0, QTableWidgetItem("  Ödeme Gelirleri"))
+        self.tbl_kasa.setItem(row, 1, QTableWidgetItem(donem))
+        item = QTableWidgetItem(f"{odeme_toplam:.2f}")
+        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.tbl_kasa.setItem(row, 2, item)
+        
+        # Gider başlığı
+        row = self.tbl_kasa.rowCount()
+        self.tbl_kasa.insertRow(row)
+        item = QTableWidgetItem("GİDERLER")
+        item.setStyleSheet("background-color: #FFB6C6; font-weight: bold;")
+        self.tbl_kasa.setItem(row, 0, item)
+        
+        # Kategorili giderler
+        for kat, tutar in gider_rows:
+            row = self.tbl_kasa.rowCount()
+            self.tbl_kasa.insertRow(row)
+            self.tbl_kasa.setItem(row, 0, QTableWidgetItem(f"  {kat}"))
+            self.tbl_kasa.setItem(row, 1, QTableWidgetItem(donem))
+            item = QTableWidgetItem(f"{float(tutar):.2f}")
+            item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.tbl_kasa.setItem(row, 2, item)
+        
+        # Bakiye
+        bakiye = tahakkuk_toplam + odeme_toplam - toplam_gider
+        
+        summary_text = (
+            f"Dönem: {donem}\n"
+            f"Tahakkuk Geliri: {tahakkuk_toplam:.2f} TL\n"
+            f"Ödeme Gelirleri: {odeme_toplam:.2f} TL\n"
+            f"TOPLAM GELİR: {tahakkuk_toplam + odeme_toplam:.2f} TL\n\n"
+            f"TOPLAM GİDER: {toplam_gider:.2f} TL\n\n"
+            f"KASA BAKIYE: {bakiye:.2f} TL"
+        )
+        
+        if bakiye >= 0:
+            self.lbl_k_summary.setStyleSheet("""
+                background-color: #E8F5E9; 
+                padding: 15px; 
+                font-size: 13px; 
+                border-radius: 5px;
+                font-weight: bold;
+                color: #2E7D32;
+            """)
+        else:
+            self.lbl_k_summary.setStyleSheet("""
+                background-color: #FFEBEE; 
+                padding: 15px; 
+                font-size: 13px; 
+                border-radius: 5px;
+                font-weight: bold;
+                color: #C62828;
+            """)
+        
+        self.lbl_k_summary.setText(summary_text)
+    
+    def _tab_ekstre(self):
+        """YENI: Ekstre Sekmesi (Daire bazlı hareketler)"""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        
+        top = QHBoxLayout()
+        
+        top.addWidget(QLabel("Daire:"))
+        self.e_cmb_daire = QComboBox()
+        self.e_cmb_daire.currentIndexChanged.connect(self.refresh_ekstre)
+        top.addWidget(self.e_cmb_daire)
+        
+        top.addWidget(QLabel("Başlangıç Dönem:"))
+        self.e_in_from = QLineEdit(add_months(ym_of_today(), -12))
+        self.e_in_from.setMaximumWidth(110)
+        top.addWidget(self.e_in_from)
+        
+        top.addWidget(QLabel("Bitiş Dönem:"))
+        self.e_in_to = QLineEdit(ym_of_today())
+        self.e_in_to.setMaximumWidth(110)
+        top.addWidget(self.e_in_to)
+        
+        btn_e_refresh = QPushButton("Yenile")
+        btn_e_refresh.clicked.connect(self.refresh_ekstre)
+        top.addWidget(btn_e_refresh)
+        
+        top.addStretch(1)
+        lay.addLayout(top)
+        
+        # Özet
+        self.lbl_e_ozet = QLabel("Özet: -")
+        self.lbl_e_ozet.setStyleSheet("font-weight: bold; padding: 8px; background-color: #f0f0f0;")
+        lay.addWidget(self.lbl_e_ozet)
+        
+        # Ekstre tablosu
+        self.tbl_ekstre = QTableWidget(0, 6)
+        self.tbl_ekstre.setHorizontalHeaderLabels(["Tarih", "Dönem", "Hareket Türü", "Açıklama", "Tutar", "Bakiye"])
+        self.tbl_ekstre.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_ekstre.horizontalHeader().setStretchLastSection(True)
+        self.tbl_ekstre.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        lay.addWidget(self.tbl_ekstre, 1)
+        
+        self.tabs.addTab(w, "Ekstre")
+    
+    def refresh_ekstre_daire_combo(self):
+        """Ekstre daire combo'sunu doldur"""
+        con = connect()
+        rows = con.execute("""
+            SELECT id, daire_no, ad_soyad
+            FROM daireler
+            WHERE aktif = 1
+            ORDER BY CAST(daire_no AS INT), daire_no
+        """).fetchall()
+        con.close()
+        
+        self.e_cmb_daire.blockSignals(True)
+        self.e_cmb_daire.clear()
+        
+        for did, dno, ad in rows:
+            self.e_cmb_daire.addItem(f"{dno} - {ad}", did)
+        
+        self.e_cmb_daire.blockSignals(False)
+    
+    def refresh_ekstre(self):
+        """Ekstre tablosunu yükle"""
+        daire_id = self.e_cmb_daire.currentData()
+        
+        if not daire_id:
+            self.tbl_ekstre.setRowCount(0)
+            self.lbl_e_ozet.setText("Özet: Daire seçin")
+            return
+        
+        start = self.e_in_from.text().strip()
+        end = self.e_in_to.text().strip()
+        
+        if not validate_period(start) or not validate_period(end):
+            self.tbl_ekstre.setRowCount(0)
+            self.lbl_e_ozet.setText("Özet: Dönem formatı YYYY-MM olmalı")
+            return
+        
+        con = connect()
+        
+        # Dönemleri al
+        donemler = months_range(start, end)
+        
+        self.tbl_ekstre.setRowCount(0)
+        
+        bakiye = 0.0
+        toplam_tahakkuk = 0.0
+        toplam_odeme = 0.0
+        
+        # Her dönem için tahakkuk ve ödemeleri göster
+        for donem in donemler:
+            row_tahakkuk = con.execute("""
+                SELECT COALESCE(SUM(tutar), 0)
+                FROM tahakkuk
+                WHERE daire_id=? AND donem=?
+            """, (daire_id, donem)).fetchone()
+            tahakkuk = float(row_tahakkuk[0]) if row_tahakkuk[0] else 0
+            
+            row_odemeler = con.execute("""
+                SELECT tarih, tutar
+                FROM odemeler
+                WHERE daire_id=? AND donem=?
+                ORDER BY tarih
+            """, (daire_id, donem)).fetchall()
+            
+            odeme_toplam_donem = sum(float(r[1]) for r in row_odemeler)
+            
+            # Tahakkuk satırı
+            if tahakkuk > 0:
+                bakiye += tahakkuk
+                row = self.tbl_ekstre.rowCount()
+                self.tbl_ekstre.insertRow(row)
+                
+                self.tbl_ekstre.setItem(row, 0, QTableWidgetItem(""))
+                self.tbl_ekstre.setItem(row, 1, QTableWidgetItem(donem))
+                
+                item_type = QTableWidgetItem("Tahakkuk")
+                item_type.setBackground(QColor(255, 240, 245))
+                self.tbl_ekstre.setItem(row, 2, item_type)
+                
+                self.tbl_ekstre.setItem(row, 3, QTableWidgetItem("Aylık Aidat"))
+                
+                item_tutar = QTableWidgetItem(f"{tahakkuk:.2f}")
+                item_tutar.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item_tutar.setBackground(QColor(255, 240, 245))
+                self.tbl_ekstre.setItem(row, 4, item_tutar)
+                
+                item_bakiye = QTableWidgetItem(f"{bakiye:.2f}")
+                item_bakiye.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item_bakiye.setBackground(QColor(255, 240, 245))
+                self.tbl_ekstre.setItem(row, 5, item_bakiye)
+                
+                toplam_tahakkuk += tahakkuk
+            
+            # Ödeme satırları
+            for tarih, tutar in row_odemeler:
+                bakiye -= float(tutar)
+                row = self.tbl_ekstre.rowCount()
+                self.tbl_ekstre.insertRow(row)
+                
+                self.tbl_ekstre.setItem(row, 0, QTableWidgetItem(tarih))
+                self.tbl_ekstre.setItem(row, 1, QTableWidgetItem(donem))
+                
+                item_type = QTableWidgetItem("Ödeme")
+                item_type.setBackground(QColor(240, 255, 240))
+                self.tbl_ekstre.setItem(row, 2, item_type)
+                
+                self.tbl_ekstre.setItem(row, 3, QTableWidgetItem("Ödeme"))
+                
+                item_tutar = QTableWidgetItem(f"-{float(tutar):.2f}")
+                item_tutar.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item_tutar.setBackground(QColor(240, 255, 240))
+                self.tbl_ekstre.setItem(row, 4, item_tutar)
+                
+                item_bakiye = QTableWidgetItem(f"{bakiye:.2f}")
+                item_bakiye.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item_bakiye.setBackground(QColor(240, 255, 240))
+                self.tbl_ekstre.setItem(row, 5, item_bakiye)
+                
+                toplam_odeme += float(tutar)
+        
+        con.close()
+        
+        # Özet
+        ozet = (
+            f"Dönem: {start} → {end} | "
+            f"Tahakkuk: {toplam_tahakkuk:.2f} TL | "
+            f"Ödeme: {toplam_odeme:.2f} TL | "
+            f"Bakiye: {bakiye:.2f} TL"
+        )
+        self.lbl_e_ozet.setText(ozet)
+    
     # ============ REFRESH & SETTINGS ============
     
     def save_settings(self):
@@ -1569,6 +2099,10 @@ class ApartmanAidatApp(QWidget):
         self.refresh_gider_table()
         self.refresh_duyuru_table()
         self.refresh_report()
+        self.refresh_odeme_gecmisi_daire_combo()
+        self.refresh_odeme_gecmisi_table()
+        self.refresh_ekstre_daire_combo()
+        self.refresh_ekstre()
 
 
 def main():
